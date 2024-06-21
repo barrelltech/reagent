@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.2.0 (2023-02-16)
+
+**[compare](https://github.com/reagent-project/reagent/compare/v1.1.1...v1.2.0)**
+
+### Features and changes
+
+- *Experimental* React 18 support
+    - `reagent.dom/render` continues to use old `ReactDOM.render` and you can
+      continue using React 17 like before.
+    - **Reagent test suite is still running against React 17 compatibility mode**
+- New `reagent.dom.client` namespace for React 18 `createRoot` API and related helpers.
+    - One new test case is using this and testing Reagent with the new React batching.
+- Deprecate `reagent.dom/dom-node` and `reagent.dom/force-update-all`
+
+### Bugfixes
+
+- Fix shadow-cljs inference warning with `with-let` ([#585](https://github.com/reagent-project/reagent/issues/585))
+- Avoid infinite look in `reagent.impl.input` if inputs gets focus immediately after
+  value was set ([#566](https://github.com/reagent-project/reagent/issues/566))
+- Avoid missing React key warning when using `false` as the key value ([#569](https://github.com/reagent-project/reagent/issues/569))
+
 ## 1.1.1 (2022-03-09)
 
 **[compare](https://github.com/reagent-project/reagent/compare/v1.1.0...v1.1.1)**
@@ -397,9 +418,13 @@ Currently it looks like all the Cljsjs React libraries need to be updated
 to use require `react` instead of `cljsjs.react`, as the foreign-lib
 namespace was renamed to match the npm package.
 
-React-with-addons bundle [has been deprecated](https://facebook.github.io/react/docs/addons.html) and Cljsjs no longer provides new versions
+React-with-addons bundle [has been deprecated](https://reactjs.org/docs/addons.html) and Cljsjs no longer provides new versions
 of that package. The latest React-with-addons version won't work with Reagent 0.8.
-For animation utils use [react-transition-group](https://github.com/cljsjs/packages/tree/master/react-transition-group) package instead. [React-dom/test-utils](https://facebook.github.io/react/docs/test-utils.html) and [react-addons-perf](https://facebook.github.io/react/docs/perf.html) are not currently packaged as browserified files, so their use would require Webpack, or they might work with Closure module processing (TODO: Provide example).
+For animation utils use [react-transition-group](https://github.com/cljsjs/packages/tree/master/react-transition-group) package instead.
+[React-dom/test-utils](https://reactjs.org/docs/test-utils.html) and
+[react-addons-perf](https://reactjs.org/docs/perf.html) are not
+currently packaged as browserified files, so their use would require Webpack,
+or they might work with Closure module processing (TODO: Provide example).
 
 #### Read [0.8 upgrade guide](./doc/0.8-upgrade.md) for more information.
 

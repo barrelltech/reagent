@@ -16,6 +16,19 @@ As described below, reagent provides a number of extensions and conveniences to 
 2. If the second element is a map, it represents the attributes to the element. The attribute map may be omitted.
 3. Any additional elements must either be Hiccup vectors representing child nodes or string literals representing child text nodes.
 
+### Creating non standard HTML attributes
+
+While standard HTML attributes are passed as `:keywords`, if you need a non standard one, use a string key:
+
+```clojure
+[:span {"custom-attribute" "value"}]
+```
+Will result in:
+
+```html
+<span custom-attribute="value"></span>
+```
+
 ## Special treatment of `nil` child nodes
 
 Reagent and React ignore nil nodes, which allow conditional logic in Hiccup forms:
@@ -41,6 +54,25 @@ The `:style` attribute can be written a string or as a map. The following two ar
 ```
 
 The map form is the same as [React's style attribute](https://reactjs.org/docs/dom-elements.html#style), except that when using the map form of the style attribute, the keys should be the same as the CSS attribute as shown in the example above (not in camel case as is required JavaScript).
+
+### CSS custom properties styntax
+
+To create an element with a CSS custom property like this:
+
+```html
+<span style="--custom-property: value"></span>
+```
+Use a string as a key for the `:style` map:
+
+```clojure
+[:span {:style {"--custom-property" "value"}}]
+```
+
+NOTE: This is due to how Reagent turns keywords as map keys to Object
+properties with conversion from snake-case to camelCase, which React
+also uses with CSS properties (vs. regular CSS). It could be possible
+to change the implementation to skip the case-conversion for properties
+starting with `--` but it isn't implemented now.
 
 ## Special interpretation of `class` attribute
 

@@ -2,7 +2,6 @@
   (:require [react-dom :as react-dom]
             [reagent.impl.util :as util]
             [reagent.impl.template :as tmpl]
-            [reagent.impl.input :as input]
             [reagent.impl.batching :as batch]
             [reagent.impl.protocols :as p]
             [reagent.ratom :as ratom]))
@@ -35,14 +34,18 @@
 
   Returns the mounted component instance."
   ([comp container]
-   (render comp container tmpl/default-compiler))
+   (render comp container tmpl/*current-default-compiler*))
   ([comp container callback-or-compiler]
    (ratom/flush!)
-   (let [[compiler callback] (if (fn? callback-or-compiler)
-                               [tmpl/default-compiler callback-or-compiler]
-                               ;; TODO: Callback option doesn't make sense now that
-                               ;; val is compiler object, not map.
-                               [callback-or-compiler (:callback callback-or-compiler)])
+   (let [[compiler callback] (cond
+                               (map? callback-or-compiler)
+                               [(:compiler callback-or-compiler) (:callback callback-or-compiler)]
+
+                               (fn? callback-or-compiler)
+                               [tmpl/*current-default-compiler* callback-or-compiler]
+
+                               :else
+                               [callback-or-compiler nil])
          f (fn []
              (p/as-element compiler (if (fn? comp) (comp) comp)))]
      (render-comp f container callback))))
@@ -54,6 +57,7 @@
 
 (defn dom-node
   "Returns the root DOM node of a mounted component."
+  {:deprecated "1.2.0"}
   [this]
   (react-dom/findDOMNode this))
 
@@ -67,6 +71,7 @@
   functions are passed by value, and not by reference, in
   ClojureScript). To get around this you'll have to introduce a layer
   of indirection, for example by using `(render [#'foo])` instead."
+  {:deprecated "1.2.0"}
   []
   (ratom/flush!)
   (doseq [[container comp] @roots]
