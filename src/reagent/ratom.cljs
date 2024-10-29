@@ -62,7 +62,7 @@
       (._update-watching r c))
     res))
 
-(defn- notify-deref-watcher!
+(defn notify-deref-watcher!
   "Add `derefed` to the `captured` field of `*ratom-context*`.
 
   See also `in-context`"
@@ -78,17 +78,17 @@
     (swap! -running + (- (count new) (count old))))
   new)
 
-(defn- add-w [^clj this key f]
+(defn add-w [^clj this key f]
   (let [w (.-watches this)]
     (set! (.-watches this) (check-watches w (assoc w key f)))
     (set! (.-watchesArr this) nil)))
 
-(defn- remove-w [^clj this key]
+(defn remove-w [^clj this key]
   (let [w (.-watches this)]
     (set! (.-watches this) (check-watches w (dissoc w key)))
     (set! (.-watchesArr this) nil)))
 
-(defn- notify-w [^clj this old new]
+(defn notify-w [^clj this old new]
   (let [w (.-watchesArr this)
         a (if (nil? w)
             ;; Copy watches to array for speed
@@ -179,7 +179,7 @@
 
 (declare make-reaction)
 
-(defn- cached-reaction [f ^clj o k ^clj obj destroy]
+(defn cached-reaction [f ^clj o k ^clj obj destroy]
   (let [m (.-reagReactionCache o)
         m (if (nil? m) {} m)
         r (m k nil)]
@@ -512,10 +512,168 @@
             (._queued-run r)))
         (recur)))))
 
+;; From barrelltech
+(deftype ReactionIdentical [f ^:mutable state ^:mutable ^boolean dirty? ^boolean nocache?
+                            ^:mutable watching ^:mutable watches ^:mutable auto-run
+                            ^:mutable caught]
+  IAtom
+  IReactiveAtom
+
+  IWatchable
+  (-notify-watches [this old new] (notify-w this old new))
+  (-add-watch [this key f]        (add-w this key f))
+  (-remove-watch [this key]
+    (let [was-empty (empty? watches)]
+      (remove-w this key)
+      (when (and (not was-empty)
+                 (empty? watches)
+                 (nil? auto-run))
+        (dispose! this))))
+
+  IReset
+  (-reset! [a newval]
+    (assert (fn? (.-on-set a)) "Reaction is read only; on-set is not allowed")
+    (let [oldval state
+          newval (.on-set a oldval newval)]
+      (when-not (identical? oldval newval) 
+        (set! state newval)
+        (notify-w a oldval newval))
+      newval))
+        
+  ISwap
+  (-swap! [a f]          (-reset! a (f (._peek-at a))))
+  (-swap! [a f x]        (-reset! a (f (._peek-at a) x)))
+  (-swap! [a f x y]      (-reset! a (f (._peek-at a) x y)))
+  (-swap! [a f x y more] (-reset! a (apply f (._peek-at a) x y more)))
+
+  Object
+  (_peek-at [this]
+    (binding [*ratom-context* nil]
+      (-deref this)))
+
+  (_handle-change [this sender oldval newval]
+    (when-not (or (identical? oldval newval)
+                  dirty?)
+      (if (nil? auto-run)
+        (do
+          (set! dirty? true)
+          (rea-enqueue this))
+        (if (true? auto-run)
+          (._run this false)
+          (auto-run this)))))
+
+  (_update-watching [this derefed]
+    (let [new (set derefed)
+          old (set watching)]
+      (set! watching derefed)
+      (doseq [w (s/difference new old)]
+        (-add-watch w this handle-reaction-change))
+      (doseq [w (s/difference old new)]
+        (-remove-watch w this))))
+
+  (_queued-run [this]
+    (when (and dirty? (some? watching))
+      (._run this true)))
+
+  (_try-capture [this f]
+    (try
+      (set! caught nil)
+      (deref-capture f this)
+      (catch :default e
+        (set! state e)
+        (set! caught e)
+        (set! dirty? false))))
+
+  (_run [this check]
+    (let [oldstate state
+          res (if check
+                (._try-capture this f)
+                (deref-capture f this))]
+      (when-not nocache?
+        (set! state res)
+        ;; Use = to determine equality from reactions, since
+        ;; they are likely to produce new data structures.
+        (when-not (or (nil? watches)
+                      (identical? oldstate res))
+          (notify-w this oldstate res)))
+      res))
+
+  (_set-opts [this {:keys [auto-run on-set on-dispose no-cache]}]
+    (when (some? auto-run)
+      (set! (.-auto-run this) auto-run))
+    (when (some? on-set)
+      (set! (.-on-set this) on-set))
+    (when (some? on-dispose)
+      (set! (.-on-dispose this) on-dispose))
+    (when (some? no-cache)
+      (set! (.-nocache? this) no-cache)))
+
+  IRunnable
+  (run [this]
+    (flush!)
+    (._run this false))
+
+  IDeref
+  (-deref [this]
+    (when-some [e caught]
+      (throw e))
+    (let [non-reactive (nil? *ratom-context*)]
+      (when non-reactive
+        (flush!))
+      (if (and non-reactive (nil? auto-run))
+        (when dirty?
+          (let [oldstate state]
+            (set! state (f))
+            (when-not (or (nil? watches) (identical? oldstate state))
+              (notify-w this oldstate state))))
+        (do
+          (notify-deref-watcher! this)
+          (when dirty?
+            (._run this false)))))
+    state)
+
+  IDisposable
+  (dispose! [this]
+    (let [s state
+          wg watching]
+      (set! watching nil)
+      (set! state nil)
+      (set! auto-run nil)
+      (set! dirty? true)
+      (doseq [w (set wg)]
+        (-remove-watch w this))
+      (when (some? (.-on-dispose this))
+        (.on-dispose this s))
+      (when-some [a (.-on-dispose-arr this)]
+        (dotimes [i (alength a)]
+          ((aget a i) this)))))
+
+  (add-on-dispose! [this f]
+    ;; f is called with the reaction as argument when it is no longer active
+    (if-some [a (.-on-dispose-arr this)]
+      (.push a f)
+      (set! (.-on-dispose-arr this) (array f))))
+
+  IEquiv
+  (-equiv [o other] (identical? o other))
+
+  IPrintWithWriter
+  (-pr-writer [a w opts] (pr-atom a w opts "Reaction" {:val (-deref a)}))
+
+  IHash
+  (-hash [this] (goog/getUid this)))
+
 (set! batch/ratom-flush flush!)
 
 (defn make-reaction [f & {:keys [auto-run on-set on-dispose]}]
   (let [reaction (->Reaction f nil true false nil nil nil nil)]
+    (._set-opts reaction {:auto-run auto-run
+                          :on-set on-set
+                          :on-dispose on-dispose})
+    reaction))
+
+(defn make-reaction-identical [f & {:keys [auto-run on-set on-dispose]}]
+  (let [reaction (->ReactionIdentical f nil true false nil nil nil nil)]
     (._set-opts reaction {:auto-run auto-run
                           :on-set on-set
                           :on-dispose on-dispose})
@@ -609,22 +767,22 @@
 
 
 #_(do
-  (defn ratom-perf []
-    (set! debug false)
-    (dotimes [_ 10]
-      (let [nite 100000
-            a (atom 0)
-            f (fn []
-                (quot @a 10))
-            mid (make-reaction f)
-            res (track! (fn []
-                          ;; (with-let [x 1])
-                          ;; @(track f)
-                          (inc @mid)
-                          ))]
-        @res
-        (time (dotimes [x nite]
-                (swap! a inc)
-                (flush!)))
-        (dispose! res))))
-  (ratom-perf))
+   (defn ratom-perf []
+     (set! debug false)
+     (dotimes [_ 10]
+       (let [nite 100000
+             a (atom 0)
+             f (fn []
+                 (quot @a 10))
+             mid (make-reaction f)
+             res (track! (fn []
+                           ;; (with-let [x 1])
+                           ;; @(track f)
+                           (inc @mid)))]
+                          
+         @res
+         (time (dotimes [x nite]
+                 (swap! a inc)
+                 (flush!)))
+         (dispose! res))))
+   (ratom-perf))
